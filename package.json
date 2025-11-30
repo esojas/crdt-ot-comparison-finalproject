@@ -1,0 +1,27 @@
+{
+  "name": "distributed-system-final-project",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build:client": "browserify sharedb/client/client.js -o sharedb/client/client.bundle.js",
+    "start:server": "node sharedb/server/sharedb-server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@teamwork/websocket-json-stream": "^2.0.0",
+    "express": "^5.1.0",
+    "reconnecting-websocket": "^4.4.0",
+    "sharedb": "^5.2.2",
+    "ws": "^8.18.3",
+    "y-websocket": "^3.0.0",
+    "yjs": "^13.6.27"
+  },
+  "devDependencies": {
+    "browserify": "^17.0.1",
+    "nodemon": "^3.1.11"
+  }
+}
