@@ -13,6 +13,7 @@ function init() {
   })
 
   var doc = null
+  var whiteboardDoc = null
   var isReady = false
 
   function updateStatus(status, color) {
@@ -59,7 +60,8 @@ function init() {
     }
   })
 
-  console.log('Getting document...')
+  // Initialize counter document
+  console.log('Getting counter document...')
   doc = connection.get('doc-collection', 'doc-id')
 
   doc.subscribe((error) => {
@@ -69,16 +71,16 @@ function init() {
       return
     }
     
-    console.log('Document subscribed!', doc.data)
+    console.log('Counter document subscribed!', doc.data)
 
     if (!doc.type) {
-      console.log('Creating document...')
+      console.log('Creating counter document...')
       doc.create({counter: 0}, (error) => {
         if (error) {
           console.error('Create error:', error)
           isReady = false
         } else {
-          console.log('Document created!')
+          console.log('Counter document created!')
           isReady = true
           updateCounter()
         }
@@ -90,12 +92,12 @@ function init() {
   });
 
   doc.on('op', (op) => {
-    console.log('Operation received:', op)
+    console.log('Counter operation received:', op)
     updateCounter()
   })
 
   doc.on('error', (error) => {
-    console.error('Document error:', error)
+    console.error('Counter document error:', error)
     isReady = false
   })
 
@@ -108,34 +110,81 @@ function init() {
     }
   }
 
-  document.getElementById('incrementBtn').addEventListener('click', () => {
-    if (!isReady || !doc) {
-      console.error('Document not ready yet. Please wait for connection.')
-      alert('Document not ready yet. Please wait for connection.')
+  // NEW: Initialize whiteboard document with retry mechanism
+  console.log('Getting whiteboard document...')
+  whiteboardDoc = connection.get('whiteboard-collection', 'whiteboard-id')
+
+  function tryInitWhiteboard() {
+    if (typeof window.initWhiteboard === 'function') {
+      console.log('Calling window.initWhiteboard...')
+      window.initWhiteboard(whiteboardDoc)
+    } else {
+      console.log('window.initWhiteboard not ready yet, retrying in 100ms...')
+      setTimeout(tryInitWhiteboard, 100)
+    }
+  }
+
+  whiteboardDoc.subscribe((error) => {
+    if (error) {
+      console.error('Whiteboard subscribe error:', error)
       return
     }
     
-    if (!doc.type) {
-      console.error('Document not created yet. Please wait.')
-      alert('Document not created yet. Please wait.')
-      return
-    }
-    
-    console.log('Incrementing...')
-    try {
-      doc.submitOp([{p: ['counter'], na: 1}], (error) => {
+    console.log('Whiteboard document subscribed!', whiteboardDoc.data)
+
+    if (!whiteboardDoc.type) {
+      console.log('Creating whiteboard document...')
+      whiteboardDoc.create({shapes: []}, (error) => {
         if (error) {
-          console.error('Submit operation error:', error)
-          alert('Error submitting operation: ' + error.message)
+          console.error('Whiteboard create error:', error)
         } else {
-          console.log('Operation submitted successfully')
+          console.log('Whiteboard document created!')
+          // Initialize whiteboard UI with retry
+          tryInitWhiteboard()
         }
       })
-    } catch (error) {
-      console.error('Error submitting operation:', error)
-      alert('Error submitting operation: ' + error.message)
+    } else {
+      // Initialize whiteboard UI with existing document
+      tryInitWhiteboard()
     }
   });
+
+  whiteboardDoc.on('error', (error) => {
+    console.error('Whiteboard document error:', error)
+  })
+
+  // Counter increment button
+  var incrementBtn = document.getElementById('incrementBtn')
+  if (incrementBtn) {
+    incrementBtn.addEventListener('click', () => {
+      if (!isReady || !doc) {
+        console.error('Document not ready yet. Please wait for connection.')
+        alert('Document not ready yet. Please wait for connection.')
+        return
+      }
+      
+      if (!doc.type) {
+        console.error('Document not created yet. Please wait.')
+        alert('Document not created yet. Please wait.')
+        return
+      }
+      
+      console.log('Incrementing...')
+      try {
+        doc.submitOp([{p: ['counter'], na: 1}], (error) => {
+          if (error) {
+            console.error('Submit operation error:', error)
+            alert('Error submitting operation: ' + error.message)
+          } else {
+            console.log('Operation submitted successfully')
+          }
+        })
+      } catch (error) {
+        console.error('Error submitting operation:', error)
+        alert('Error submitting operation: ' + error.message)
+      }
+    })
+  }
 }
 
 // Initialize when DOM is ready
