@@ -133,7 +133,310 @@
     </div>
 </div>
 
+<script src="https://unpkg.com/yjs@13.6.27/dist/yjs.js"></script>
 <script type="module" src="client.js"></script>
+<script>
+    // Whiteboard variables
+    const canvas = document.getElementById('whiteboard');
+    const context = canvas.getContext('2d');
+    let isDrawing = false;
+    let lastX = 0;
+    let lastY = 0;
+    let tool = 'pen';
+    let currentColor = '#000000';
+    let currentLineWidth = 2;
+    let drag = false;
+    let dragStartX, dragStartY;
+    let isWhiteboardReady = false;
+
+    // Color and line width controls
+    document.getElementById('colorPicker').addEventListener('input', (e) => {
+        currentColor = e.target.value;
+    });
+
+    document.getElementById('lineWidth').addEventListener('input', (e) => {
+        currentLineWidth = e.target.value;
+        document.getElementById('lineWidthValue').textContent = currentLineWidth + 'px';
+    });
+
+    // Redraw all shapes from Yjs
+    function redrawCanvas(shapesArray) {
+        context.clearRect(0, 0, canvas.width, canvas.height);
+        
+        if (!shapesArray || shapesArray.length === 0) return;
+        
+        shapesArray.forEach(item => {
+            // Handle case where item might be wrapped in array (from old code)
+            const shape = Array.isArray(item) ? item[0] : item;
+            if (!shape || !shape.type) return;
+            
+            context.strokeStyle = shape.color || '#000';
+            context.fillStyle = shape.color || '#000';
+            context.lineWidth = shape.width || 2;
+            
+            if (shape.type === 'line') {
+                context.beginPath();
+                context.moveTo(shape.startX, shape.startY);
+                context.lineTo(shape.endX, shape.endY);
+                context.stroke();
+            } else if (shape.type === 'rectangle') {
+                context.beginPath();
+                context.rect(shape.startX, shape.startY,
+                    shape.endX - shape.startX,
+                    shape.endY - shape.startY);
+                context.stroke();
+            } else if (shape.type === 'circle') {
+                context.beginPath();
+                context.arc(shape.startX, shape.startY,
+                    shape.radius, 0, Math.PI * 2);
+                context.stroke();
+            } else if (shape.type === 'text') {
+                context.font = '16px Arial';
+                context.fillText(shape.text, shape.x, shape.y);
+            } else if (shape.type === 'pen') {
+                // Draw pen strokes
+                if (shape.points && shape.points.length > 1) {
+                    context.beginPath();
+                    context.moveTo(shape.points[0].x, shape.points[0].y);
+                    for (let i = 1; i < shape.points.length; i++) {
+                        context.lineTo(shape.points[i].x, shape.points[i].y);
+                    }
+                    context.stroke();
+                }
+            }
+        });
+    }
+
+    // Mouse events
+    let currentPenStroke = null;
+
+    canvas.addEventListener('mousedown', (e) => {
+        if (!isWhiteboardReady) {
+            alert('Whiteboard not ready yet. Please wait for connection.');
+            return;
+        }
+        
+        isDrawing = true;
+        lastX = e.offsetX;
+        lastY = e.offsetY;
+        
+        if (tool === 'pen') {
+            context.beginPath();
+            context.moveTo(lastX, lastY);
+            // Start a new pen stroke
+            currentPenStroke = {
+                type: 'pen',
+                points: [{x: lastX, y: lastY}],
+                color: currentColor,
+                width: currentLineWidth
+            };
+        }
+        
+        if (tool === 'line' || tool === 'rectangle' || tool === 'circle') {
+            drag = true;
+            dragStartX = e.offsetX;
+            dragStartY = e.offsetY;
+        }
+    });
+
+    canvas.addEventListener('mousemove', (e) => {
+        if (!isDrawing) return;
+        
+        const { offsetX, offsetY } = e;
+        
+        if (tool === 'pen') {
+            context.lineWidth = currentLineWidth;
+            context.strokeStyle = currentColor;
+            context.lineTo(offsetX, offsetY);
+            context.stroke();
+            
+            // Add point to current stroke
+            if (currentPenStroke) {
+                currentPenStroke.points.push({x: offsetX, y: offsetY});
+            }
+        } else if (tool === 'eraser') {
+            context.clearRect(offsetX - 10, offsetY - 10, 20, 20);
+        } else if ((tool === 'line' || tool === 'rectangle' || tool === 'circle') && drag) {
+            if (window.shapesArray) {
+                redrawCanvas(Array.from(window.shapesArray));
+            }
+            
+            context.strokeStyle = currentColor;
+            context.lineWidth = currentLineWidth;
+            
+            if (tool === 'line') {
+                context.beginPath();
+                context.moveTo(lastX, lastY);
+                context.lineTo(offsetX, offsetY);
+                context.stroke();
+            } else if (tool === 'rectangle') {
+                context.beginPath();
+                context.rect(lastX, lastY, offsetX - lastX, offsetY - lastY);
+                context.stroke();
+            } else if (tool === 'circle') {
+                const radius = Math.sqrt(Math.pow(offsetX - lastX, 2) +
+                    Math.pow(offsetY - lastY, 2));
+                context.beginPath();
+                context.arc(lastX, lastY, radius, 0, Math.PI * 2);
+                context.stroke();
+            }
+        }
+    });
+
+    canvas.addEventListener('mouseup', (e) => {
+        if (!isDrawing) return;
+        
+        if (tool === 'pen' && currentPenStroke) {
+            // Submit the complete pen stroke to Yjs
+            if (window.shapesArray) {
+                window.shapesArray.push([currentPenStroke]);
+            }
+            currentPenStroke = null;
+        } else if (tool === 'line' || tool === 'rectangle' || tool === 'circle') {
+            const newShape = {
+                type: tool,
+                startX: dragStartX,
+                startY: dragStartY,
+                endX: e.offsetX,
+                endY: e.offsetY,
+                radius: Math.sqrt(Math.pow(e.offsetX - dragStartX, 2) +
+                        Math.pow(e.offsetY - dragStartY, 2)),
+                color: currentColor,
+                width: currentLineWidth
+            };
+            
+            // Submit to Yjs - push the shape object directly (not wrapped in array)
+            if (window.shapesArray) {
+                console.log('Pushing new shape to Yjs:', newShape);
+                window.shapesArray.push([newShape]);
+                console.log('Shape pushed, array length now:', window.shapesArray.length);
+            }
+        }
+        
+        isDrawing = false;
+        drag = false;
+    });
+
+    // Tool buttons
+    document.getElementById('clearBtn').addEventListener('click', () => {
+        if (!isWhiteboardReady) {
+            alert('Whiteboard not ready yet. Please wait for connection.');
+            return;
+        }
+        
+        context.clearRect(0, 0, canvas.width, canvas.height);
+        
+        // Clear in Yjs
+        if (window.shapesArray) {
+            // Delete all items
+            const length = window.shapesArray.length;
+            for (let i = length - 1; i >= 0; i--) {
+                window.shapesArray.delete(i);
+            }
+        }
+    });
+
+    document.getElementById('eraserBtn').addEventListener('click', () => {
+        tool = 'eraser';
+        canvas.classList.add('eraser');
+    });
+
+    document.getElementById('toolSelect').addEventListener('change', (e) => {
+        tool = e.target.value;
+        canvas.classList.remove('eraser');
+        
+        if (tool === 'text') {
+            document.getElementById('textInput').classList.remove('hidden');
+            document.getElementById('textBox').focus();
+        } else {
+            document.getElementById('textInput').classList.add('hidden');
+        }
+    });
+
+    // Text tool
+    document.getElementById('textBtn').addEventListener('click', () => {
+        const text = document.getElementById('textBox').value;
+        if (text && isWhiteboardReady) {
+            const textShape = {
+                type: 'text',
+                text: text,
+                x: lastX || 100,
+                y: lastY || 100,
+                color: currentColor
+            };
+            
+            context.font = '16px Arial';
+            context.fillStyle = currentColor;
+            context.fillText(text, textShape.x, textShape.y);
+            
+            // Submit to Yjs - push the shape object directly
+            if (window.shapesArray) {
+                window.shapesArray.push([textShape]);
+            }
+            
+            document.getElementById('textBox').value = '';
+            document.getElementById('textInput').classList.add('hidden');
+            tool = 'pen';
+        }
+    });
+
+    // Image upload
+    document.getElementById('imageBtn').addEventListener('click', () => {
+        document.getElementById('imageInput').click();
+    });
+
+    document.getElementById('imageInput').addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        const reader = new FileReader();
+        reader.onload = () => {
+            const img = new Image();
+            img.onload = () => {
+                context.drawImage(img, 0, 0, Math.min(img.width, canvas.width), Math.min(img.height, canvas.height));
+            };
+            img.src = reader.result;
+        };
+        reader.readAsDataURL(file);
+    });
+
+    // Save canvas
+    document.getElementById('saveBtn').addEventListener('click', () => {
+        const image = canvas.toDataURL('image/png');
+        const link = document.createElement('a');
+        link.href = image;
+        link.download = 'whiteboard-' + Date.now() + '.png';
+        link.click();
+    });
+
+    // Initialize whiteboard when Yjs is ready
+    window.initYjsWhiteboard = function(shapesArray) {
+        console.log('Initializing whiteboard with Yjs...');
+        window.shapesArray = shapesArray;
+        
+        // Listen for changes from other users
+        shapesArray.observe((event) => {
+            console.log('Shapes array changed:', event);
+            console.log('Current shapes array length:', shapesArray.length);
+            console.log('Shapes array contents:', Array.from(shapesArray));
+            // Redraw the entire canvas when changes occur
+            redrawCanvas(Array.from(shapesArray));
+        });
+        
+        // Also observe the document for updates to ensure we catch all changes
+        if (shapesArray.doc) {
+            shapesArray.doc.on('update', (update, origin) => {
+                console.log('Document updated, origin:', origin);
+                console.log('Shapes array length after update:', shapesArray.length);
+                redrawCanvas(Array.from(shapesArray));
+            });
+        }
+        
+        // Initial render
+        redrawCanvas(Array.from(shapesArray));
+        
+        isWhiteboardReady = true;
+        console.log('Whiteboard ready!');
+    };
+</script>
 
 </body>
 </html>

@@ -1,15 +1,11 @@
 const http = require('http');
 const express = require('express');
 const WebSocket = require('ws');
-const Y = require('yjs');
-const syncProtocol = require('y-protocols/sync');
-const awarenessProtocol = require('y-protocols/awareness');
-const encoding = require('lib0/encoding');
-const decoding = require('lib0/decoding');
-const map = require('lib0/map');
 
 // Create Express app
 const app = express();
+
+// Serve static files from client directory
 const path = require('path');
 app.use(express.static(path.join(__dirname, '../client')));
 
@@ -17,145 +13,83 @@ app.use(express.static(path.join(__dirname, '../client')));
 const server = http.createServer(app);
 
 // Create WebSocket server
-const wss = new WebSocket.Server({ noServer: true });
+const wss = new WebSocket.Server({ server });
 
-const docs = new Map();
+// Store rooms and their connected clients
+const rooms = new Map();
 
-const messageSync = 0;
-const messageAwareness = 1;
+console.log('Yjs backend initialized');
 
-/**
- * Gets a Y.Doc by name, whether in memory or on disk
- */
-const getYDoc = (docname) => map.setIfUndefined(docs, docname, () => {
-  const doc = new Y.Doc();
-  doc.gc = true;
-  docs.set(docname, doc);
-  return doc;
-});
-
-const closeConn = (doc, conn) => {
-  if (doc.conns.has(conn)) {
-    const controlledIds = doc.conns.get(conn);
-    doc.conns.delete(conn);
-    awarenessProtocol.removeAwarenessStates(doc.awareness, Array.from(controlledIds), null);
+// Handle WebSocket connections
+wss.on('connection', (ws, req) => {
+  console.log('WebSocket connection received from:', req.socket.remoteAddress);
+  
+  let roomName = 'whiteboard-room'; // Default room name
+  let room = rooms.get(roomName);
+  
+  if (!room) {
+    room = new Set();
+    rooms.set(roomName, room);
   }
-  conn.close();
-};
-
-const send = (doc, conn, message) => {
-  if (conn.readyState !== WebSocket.CONNECTING && conn.readyState !== WebSocket.OPEN) {
-    closeConn(doc, conn);
-  }
-  try {
-    conn.send(message, err => {
-      if (err != null) {
-        closeConn(doc, conn);
+  
+  room.add(ws);
+  console.log(`Client joined room: ${roomName} (${room.size} clients)`);
+  
+  // Broadcast messages to all other clients in the same room
+  ws.on('message', (message, isBinary) => {
+    console.log(`Received message (${isBinary ? 'binary' : 'text'}, ${message.length} bytes) from client`);
+    // Broadcast to all clients except the sender
+    let broadcastCount = 0;
+    room.forEach((client) => {
+      if (client !== ws && client.readyState === WebSocket.OPEN) {
+        // Send the message (ws library auto-detects binary)
+        client.send(message);
+        broadcastCount++;
       }
     });
-  } catch (e) {
-    closeConn(doc, conn);
-  }
-};
-
-const setupWSConnection = (conn, req, { docName = req.url.slice(1).split('?')[0], gc = true } = {}) => {
-  conn.binaryType = 'arraybuffer';
+    console.log(`Broadcasted message to ${broadcastCount} client(s)`);
+  });
   
-  const doc = getYDoc(docName);
-  doc.conns = doc.conns || new Map();
-  doc.awareness = doc.awareness || new awarenessProtocol.Awareness(doc);
-  
-  doc.conns.set(conn, new Set());
-
-  // Listen for Yjs updates and broadcast them
-  const updateHandler = (update, origin) => {
-    if (origin !== conn) {
-      const encoder = encoding.createEncoder();
-      encoding.writeVarUint(encoder, messageSync);
-      syncProtocol.writeUpdate(encoder, update);
-      const message = encoding.toUint8Array(encoder);
-      doc.conns.forEach((_, c) => {
-        if (c !== conn) {
-          send(doc, c, message);
-        }
-      });
-    }
-  };
-  doc.on('update', updateHandler);
-
-  // Listen for awareness updates and broadcast them
-  const awarenessChangeHandler = ({ added, updated, removed }, origin) => {
-    const changedClients = added.concat(updated).concat(removed);
-    const encoder = encoding.createEncoder();
-    encoding.writeVarUint(encoder, messageAwareness);
-    encoding.writeVarUint8Array(encoder, awarenessProtocol.encodeAwarenessUpdate(doc.awareness, changedClients));
-    const buff = encoding.toUint8Array(encoder);
-    doc.conns.forEach((_, c) => {
-      send(doc, c, buff);
-    });
-  };
-  doc.awareness.on('update', awarenessChangeHandler);
-
-  conn.on('message', message => {
-    try {
-      const encoder = encoding.createEncoder();
-      const decoder = decoding.createDecoder(new Uint8Array(message));
-      const messageType = decoding.readVarUint(decoder);
-      
-      switch (messageType) {
-        case messageSync:
-          encoding.writeVarUint(encoder, messageSync);
-          syncProtocol.readSyncMessage(decoder, encoder, doc, conn);
-          if (encoding.length(encoder) > 1) {
-            send(doc, conn, encoding.toUint8Array(encoder));
-          }
-          break;
-        case messageAwareness: {
-          awarenessProtocol.applyAwarenessUpdate(doc.awareness, decoding.readVarUint8Array(decoder), conn);
-          break;
-        }
-      }
-    } catch (err) {
-      console.error('Error processing message:', err);
+  // Handle WebSocket close
+  ws.on('close', () => {
+    console.log('WebSocket connection closed');
+    room.delete(ws);
+    if (room.size === 0) {
+      rooms.delete(roomName);
+    } else {
+      console.log(`Client left room: ${roomName} (${room.size} clients remaining)`);
     }
   });
-
-  // Send sync step 1
-  const encoder = encoding.createEncoder();
-  encoding.writeVarUint(encoder, messageSync);
-  syncProtocol.writeSyncStep1(encoder, doc);
-  send(doc, conn, encoding.toUint8Array(encoder));
   
-  const awarenessStates = doc.awareness.getStates();
-  if (awarenessStates.size > 0) {
-    const encoder = encoding.createEncoder();
-    encoding.writeVarUint(encoder, messageAwareness);
-    encoding.writeVarUint8Array(encoder, awarenessProtocol.encodeAwarenessUpdate(doc.awareness, Array.from(awarenessStates.keys())));
-    send(doc, conn, encoding.toUint8Array(encoder));
-  }
-
-  conn.on('close', () => {
-    doc.off('update', updateHandler);
-    doc.awareness.off('update', awarenessChangeHandler);
-    closeConn(doc, conn);
-  });
-};
-
-server.on('upgrade', (request, socket, head) => {
-  wss.handleUpgrade(request, socket, head, ws => {
-    wss.emit('connection', ws, request);
+  // Handle WebSocket errors
+  ws.on('error', (error) => {
+    console.error('WebSocket error:', error);
+    room.delete(ws);
+    if (room.size === 0) {
+      rooms.delete(roomName);
+    }
   });
 });
 
-wss.on('connection', setupWSConnection);
+// Handle server errors
+wss.on('error', (error) => {
+  console.error('WebSocket Server error:', error);
+});
 
+// Start the server
 const PORT = process.env.PORT || 8081;
 server.listen(PORT, () => {
   console.log(`Yjs server running on http://localhost:${PORT}`);
   console.log(`WebSocket available at ws://localhost:${PORT}`);
-  console.log('Server ready for CRDT synchronization');
+  console.log('Waiting for connections...');
 });
 
+// Handle server errors
+server.on('error', (error) => {
+  console.error('Server error:', error);
+});
+
+// Graceful shutdown
 process.on('SIGTERM', () => {
   console.log('SIGTERM signal received: closing HTTP server');
   server.close(() => {
