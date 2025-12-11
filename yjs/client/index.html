@@ -3,16 +3,27 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>YJs</title>
+    <title>Yjs - Collaborative Whiteboard</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/flowbite/2.3.0/flowbite.min.js"></script>
+    <style>
+        .draggable {
+            cursor: move;
+        }
+        canvas {
+            cursor: crosshair;
+        }
+        canvas.eraser {
+            cursor: pointer;
+        }
+    </style>
 </head>
-<body>
+<body class="bg-gray-50">
     
 <nav class="bg-white fixed w-full z-20 top-0 start-0 border-b border-gray-200">
   <div class="max-w-screen-xl flex flex-wrap items-center justify-between mx-auto p-4">
     <a href="index.html" class="flex items-center space-x-3 rtl:space-x-reverse">
-        <span class="self-center text-xl text-gray-900 font-semibold whitespace-nowrap">YJs</span>
+        <span class="self-center text-xl text-gray-900 font-semibold whitespace-nowrap">Yjs - Collaborative Whiteboard</span>
     </a>
     <button data-collapse-toggle="navbar-default" type="button" class="inline-flex items-center p-2 w-10 h-10 justify-center text-sm text-gray-500 rounded-lg md:hidden hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-gray-200" aria-controls="navbar-default" aria-expanded="false">
         <span class="sr-only">Open main menu</span>
@@ -33,9 +44,96 @@
   </div>
 </nav>
 
-<div class="pt-20">
-    <h1 class="text-2xl font-bold text-center">Welcome to YJs</h1>
+<div class="pt-24 pb-8 px-4">
+    <!-- Status Bar -->
+    <div class="max-w-6xl mx-auto mb-4">
+        <div class="bg-white rounded-lg shadow p-4 flex justify-between items-center">
+            <div>
+                <span class="text-sm text-gray-600">Status:</span>
+                <span id="status" class="ml-2 font-bold text-green-600">Connecting...</span>
+            </div>
+            <div>
+                <span class="text-sm text-gray-600">Counter:</span>
+                <span id="counter" class="ml-2 font-bold text-blue-600">0</span>
+                <button id="incrementBtn" class="ml-4 px-3 py-1 bg-blue-500 hover:bg-blue-700 text-white text-sm rounded">+1</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Whiteboard Container -->
+    <div class="max-w-6xl mx-auto bg-white shadow-lg rounded-lg p-6">
+        <h1 class="text-3xl font-semibold mb-6 text-center text-gray-800">
+            Virtual Whiteboard
+        </h1>
+        
+        <!-- Canvas Container -->
+        <div class="border-2 border-gray-300 rounded-lg mb-6 p-4 relative bg-white">
+            <div class="flex justify-center items-center">
+                <canvas id="whiteboard" width="900" height="600" class="border border-gray-200 rounded"></canvas>
+            </div>
+            <div class="absolute top-4 right-4 flex gap-2">
+                <button id="clearBtn" class="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition">
+                    Clear All
+                </button>
+                <button id="eraserBtn" class="px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition">
+                    Eraser
+                </button>
+            </div>
+        </div>
+        
+        <!-- Tools Panel -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+            <!-- Drawing Tools -->
+            <div class="bg-gray-50 p-4 rounded-lg">
+                <label for="toolSelect" class="block text-sm font-medium text-gray-700 mb-2">
+                    Drawing Tool:
+                </label>
+                <select id="toolSelect" class="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                    <option value="pen">✏️ Pen</option>
+                    <option value="line">📏 Line</option>
+                    <option value="rectangle">⬜ Rectangle</option>
+                    <option value="circle">⭕ Circle</option>
+                    <option value="text">📝 Text</option>
+                </select>
+            </div>
+
+            <!-- Color Picker -->
+            <div class="bg-gray-50 p-4 rounded-lg">
+                <label for="colorPicker" class="block text-sm font-medium text-gray-700 mb-2">
+                    Color:
+                </label>
+                <div class="flex gap-2 items-center">
+                    <input type="color" id="colorPicker" value="#000000" class="h-10 w-20 rounded cursor-pointer">
+                    <input type="range" id="lineWidth" min="1" max="10" value="2" class="flex-1">
+                    <span id="lineWidthValue" class="text-sm text-gray-600">2px</span>
+                </div>
+            </div>
+
+            <!-- Actions -->
+            <div class="bg-gray-50 p-4 rounded-lg flex gap-2">
+                <button id="saveBtn" class="flex-1 px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition">
+                    💾 Save
+                </button>
+                <button id="imageBtn" class="flex-1 px-4 py-2 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600 transition">
+                    🖼️ Image
+                </button>
+                <input type="file" id="imageInput" accept="image/*" class="hidden">
+            </div>
+        </div>
+
+        <!-- Text Input (Hidden by default) -->
+        <div id="textInput" class="mb-4 hidden bg-blue-50 p-4 rounded-lg">
+            <div class="flex gap-2">
+                <input type="text" id="textBox" placeholder="Enter text to add to canvas..." class="flex-1 border border-gray-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <button id="textBtn" class="px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition">
+                    Add Text
+                </button>
+            </div>
+        </div>
+    </div>
 </div>
+
+<script type="module" src="client.js"></script>
 
 </body>
 </html>

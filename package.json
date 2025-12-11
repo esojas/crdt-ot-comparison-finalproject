@@ -5,7 +5,9 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "build:client": "browserify sharedb/client/client.js -o sharedb/client/client.bundle.js",
-    "start:server": "node sharedb/server/sharedb-server.js"
+    "build:yjs-client": "browserify yjs/client/client.js -o yjs/client/client.bundle.js",
+    "start:server": "node sharedb/server/sharedb-server.js",
+    "start:yjs-server": "node yjs/server/yjs-server.js"
   },
   "keywords": [],
   "author": "",
