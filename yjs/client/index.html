@@ -164,11 +164,10 @@
         context.clearRect(0, 0, canvas.width, canvas.height);
         
         if (!shapesArray || shapesArray.length === 0) return;
+        console.log('[draw] Redrawing canvas with', shapesArray.length, 'shape(s)');
         
-        shapesArray.forEach(item => {
-            // Handle case where item might be wrapped in array (from old code)
-            const shape = Array.isArray(item) ? item[0] : item;
-            if (!shape || !shape.type) return;
+        shapesArray.forEach(shape => {
+            if (!shape) return;
             
             context.strokeStyle = shape.color || '#000';
             context.fillStyle = shape.color || '#000';
@@ -215,6 +214,7 @@
             alert('Whiteboard not ready yet. Please wait for connection.');
             return;
         }
+        console.log('[input] mousedown', { tool, x: e.offsetX, y: e.offsetY });
         
         isDrawing = true;
         lastX = e.offsetX;
@@ -243,6 +243,9 @@
         if (!isDrawing) return;
         
         const { offsetX, offsetY } = e;
+        if (tool === 'pen' && currentPenStroke && currentPenStroke.points.length % 10 === 0) {
+            console.log('[input] pen move points:', currentPenStroke.points.length);
+        }
         
         if (tool === 'pen') {
             context.lineWidth = currentLineWidth;
@@ -289,6 +292,7 @@
         if (tool === 'pen' && currentPenStroke) {
             // Submit the complete pen stroke to Yjs
             if (window.shapesArray) {
+                console.log('[sync] submitting pen stroke with', currentPenStroke.points.length, 'points');
                 window.shapesArray.push([currentPenStroke]);
             }
             currentPenStroke = null;
@@ -305,11 +309,10 @@
                 width: currentLineWidth
             };
             
-            // Submit to Yjs - push the shape object directly (not wrapped in array)
+            // Submit to Yjs
             if (window.shapesArray) {
-                console.log('Pushing new shape to Yjs:', newShape);
+                console.log('[sync] submitting shape', newShape);
                 window.shapesArray.push([newShape]);
-                console.log('Shape pushed, array length now:', window.shapesArray.length);
             }
         }
         
@@ -323,6 +326,7 @@
             alert('Whiteboard not ready yet. Please wait for connection.');
             return;
         }
+        console.log('[sync] clearing all shapes');
         
         context.clearRect(0, 0, canvas.width, canvas.height);
         
@@ -369,8 +373,9 @@
             context.fillStyle = currentColor;
             context.fillText(text, textShape.x, textShape.y);
             
-            // Submit to Yjs - push the shape object directly
+            // Submit to Yjs
             if (window.shapesArray) {
+                console.log('[sync] submitting text shape', textShape);
                 window.shapesArray.push([textShape]);
             }
             
@@ -414,21 +419,9 @@
         
         // Listen for changes from other users
         shapesArray.observe((event) => {
-            console.log('Shapes array changed:', event);
-            console.log('Current shapes array length:', shapesArray.length);
-            console.log('Shapes array contents:', Array.from(shapesArray));
-            // Redraw the entire canvas when changes occur
+            console.log('[sync] shapes array changed:', event);
             redrawCanvas(Array.from(shapesArray));
         });
-        
-        // Also observe the document for updates to ensure we catch all changes
-        if (shapesArray.doc) {
-            shapesArray.doc.on('update', (update, origin) => {
-                console.log('Document updated, origin:', origin);
-                console.log('Shapes array length after update:', shapesArray.length);
-                redrawCanvas(Array.from(shapesArray));
-            });
-        }
         
         // Initial render
         redrawCanvas(Array.from(shapesArray));
