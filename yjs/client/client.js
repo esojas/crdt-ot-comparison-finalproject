@@ -29,11 +29,10 @@ document.addEventListener('DOMContentLoaded', () => {
   let isDrawing = false
   let dragStartX = 0
   let dragStartY = 0
-  let currentShapeIndex = -1
+  let currentShapeId = null  // Changed from index to ID
   let pendingPenPoints = []
   let renderRaf = null
   let batchRaf = null
-
 
   colorPicker.addEventListener('input', (e) => currentColor = e.target.value)
   lineWidthInput.addEventListener('input', (e) => {
@@ -46,9 +45,9 @@ document.addEventListener('DOMContentLoaded', () => {
   // connect to local server. change ws://localhost:1234 if your server runs elsewhere
   const provider = new WebsocketProvider('ws://localhost:1234', 'whiteboard-room', ydoc)
 
-  // shared types
-  const shapes = ydoc.getArray('shapes') // array of shape-objects
-  const meta = ydoc.getMap('meta') // used to store 'count' and other small shared values
+  // shared types - using Map instead of Array for better conflict resolution
+  const shapesMap = ydoc.getMap('shapesMap')
+  const meta = ydoc.getMap('meta')
 
   // connection status
   provider.on('status', (ev) => {
@@ -67,7 +66,7 @@ document.addEventListener('DOMContentLoaded', () => {
   })
 
   // observe shapes (repaint when shapes change)
-  shapes.observe(() => {
+  shapesMap.observe(() => {
     redrawCanvas()
   })
 
@@ -93,10 +92,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // clear all shapes (collaborative)
   clearBtn.addEventListener('click', () => {
     ydoc.transact(() => {
-      // delete all elements from shapes
-      if (shapes.length > 0) {
-        shapes.delete(0, shapes.length)
-      }
+      shapesMap.clear()
     })
   })
 
@@ -120,8 +116,15 @@ document.addEventListener('DOMContentLoaded', () => {
   textBtn.addEventListener('click', () => {
     const t = textBox.value.trim()
     if (!t) return
+    const id = generateId()
     ydoc.transact(() => {
-      shapes.push([{ type: 'text', text: t, x: dragStartX || 100, y: dragStartY || 100, color: currentColor }])
+      shapesMap.set(id, { 
+        type: 'text', 
+        text: t, 
+        x: dragStartX || 100, 
+        y: dragStartY || 100, 
+        color: currentColor 
+      })
     })
     textBox.value = ''
     textInputWrapper.classList.add('hidden')
@@ -152,14 +155,19 @@ document.addEventListener('DOMContentLoaded', () => {
     link.click()
   })
 
+  // Helper function to generate unique IDs
+  function generateId() {
+    return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+  }
+
   // ---------- drawing & rendering ----------
   function redrawCanvas() {
     if (renderRaf) cancelAnimationFrame(renderRaf)
     renderRaf = requestAnimationFrame(() => {
       context.clearRect(0, 0, canvas.width, canvas.height)
-      if (!shapes || shapes.length === 0) return
-      const arr = shapes.toArray()
-      arr.forEach((shape) => {
+      
+      const entries = Array.from(shapesMap.entries())
+      entries.forEach(([id, shape]) => {
         if (!shape) return
         context.strokeStyle = shape.color || '#000'
         context.fillStyle = shape.color || '#000'
@@ -205,70 +213,80 @@ document.addEventListener('DOMContentLoaded', () => {
     dragStartX = e.offsetX
     dragStartY = e.offsetY
 
+    currentShapeId = generateId()
+
     ydoc.transact(() => {
       if (tool === 'pen') {
-        const newStroke = { type: 'pen', points: [{ x: dragStartX, y: dragStartY }], color: currentColor, width: currentLineWidth }
-        shapes.push([newStroke])
-        currentShapeIndex = shapes.length - 1
+        const newStroke = { 
+          type: 'pen', 
+          points: [{ x: dragStartX, y: dragStartY }], 
+          color: currentColor, 
+          width: currentLineWidth 
+        }
+        shapesMap.set(currentShapeId, newStroke)
       } else if (tool === 'line' || tool === 'rectangle' || tool === 'circle') {
-        const tempShape = { type: tool, startX: dragStartX, startY: dragStartY, endX: dragStartX, endY: dragStartY, radius: 0, color: currentColor, width: currentLineWidth }
-        shapes.push([tempShape])
-        currentShapeIndex = shapes.length - 1
+        const tempShape = { 
+          type: tool, 
+          startX: dragStartX, 
+          startY: dragStartY, 
+          endX: dragStartX, 
+          endY: dragStartY, 
+          radius: 0, 
+          color: currentColor, 
+          width: currentLineWidth 
+        }
+        shapesMap.set(currentShapeId, tempShape)
       }
     })
   })
 
   canvas.addEventListener('mousemove', (e) => {
-    if (!isDrawing || currentShapeIndex === -1) return
+    if (!isDrawing || !currentShapeId) return
     const offsetX = e.offsetX
     const offsetY = e.offsetY
 
-  if (tool === 'pen') {
-    pendingPenPoints.push({ x: offsetX, y: offsetY })
-    if (!batchRaf) {
-      batchRaf = requestAnimationFrame(() => {
-        if (pendingPenPoints.length > 0 && currentShapeIndex !== -1) {
-          ydoc.transact(() => {
-            const shape = shapes.get(currentShapeIndex)
-            if (shape) {
-              const existing = Array.isArray(shape.points) ? shape.points : []
-              const updatedPoints = [...existing, ...pendingPenPoints]
-              // replace exactly one element at currentShapeIndex
-              shapes.delete(currentShapeIndex, 1)
-              shapes.insert(currentShapeIndex, [{ ...shape, points: updatedPoints }])
-            }
-          })
-          pendingPenPoints = []
-        }
-        batchRaf = null
+    if (tool === 'pen') {
+      pendingPenPoints.push({ x: offsetX, y: offsetY })
+      if (!batchRaf) {
+        batchRaf = requestAnimationFrame(() => {
+          if (pendingPenPoints.length > 0 && currentShapeId) {
+            ydoc.transact(() => {
+              const shape = shapesMap.get(currentShapeId)
+              if (shape) {
+                const existing = Array.isArray(shape.points) ? shape.points : []
+                const updatedPoints = [...existing, ...pendingPenPoints]
+                shapesMap.set(currentShapeId, { ...shape, points: updatedPoints })
+              }
+            })
+            pendingPenPoints = []
+          }
+          batchRaf = null
         })
       }
     } else if (tool === 'line' || tool === 'rectangle' || tool === 'circle') {
-      const shape = shapes.get(currentShapeIndex)
+      const shape = shapesMap.get(currentShapeId)
       if (!shape) return
       const radius = Math.sqrt(Math.pow(offsetX - dragStartX, 2) + Math.pow(offsetY - dragStartY, 2))
       const updated = { ...shape, endX: offsetX, endY: offsetY, radius }
       ydoc.transact(() => {
-        shapes.delete(currentShapeIndex, 1)
-        shapes.insert(currentShapeIndex, [updated])
+        shapesMap.set(currentShapeId, updated)
       })
     }
   })
 
   canvas.addEventListener('mouseup', () => {
-    if (tool === 'pen' && pendingPenPoints.length > 0 && currentShapeIndex !== -1) {
+    if (tool === 'pen' && pendingPenPoints.length > 0 && currentShapeId) {
       ydoc.transact(() => {
-        const shape = shapes.get(currentShapeIndex)
+        const shape = shapesMap.get(currentShapeId)
         if (shape) {
           const updatedPoints = [...(shape.points || []), ...pendingPenPoints]
-          shapes.delete(currentShapeIndex, 1)
-          shapes.insert(currentShapeIndex, [{ ...shape, points: updatedPoints }])
+          shapesMap.set(currentShapeId, { ...shape, points: updatedPoints })
         }
       })
       pendingPenPoints = []
     }    
     isDrawing = false
-    currentShapeIndex = -1
+    currentShapeId = null
   })
 
   // click outside canvas or leave should stop drawing
