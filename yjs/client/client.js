@@ -249,7 +249,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const radius = Math.sqrt(Math.pow(offsetX - dragStartX, 2) + Math.pow(offsetY - dragStartY, 2))
       const updated = { ...shape, endX: offsetX, endY: offsetY, radius }
       ydoc.transact(() => {
-        shapes.delete(currentShapeIndex)
+        shapes.delete(currentShapeIndex, 1)
         shapes.insert(currentShapeIndex, [updated])
       })
     }
