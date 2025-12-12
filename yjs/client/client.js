@@ -1,201 +1,282 @@
-// Import Yjs and y-websocket as ES modules
-import * as Y from 'https://cdn.skypack.dev/yjs@13.6.27'
-import { WebsocketProvider } from 'https://cdn.skypack.dev/y-websocket@3.0.0'
+// client.js (module)
+import * as Y from 'https://unpkg.com/yjs?module'
+import { WebsocketProvider } from 'https://unpkg.com/y-websocket?module'
 
-// Make Y available globally for inline scripts
-if (typeof window !== 'undefined') {
-  window.Y = Y
-  window.WebsocketProvider = WebsocketProvider
-}
+document.addEventListener('DOMContentLoaded', () => {
+  // DOM refs
+  const canvas = document.getElementById('whiteboard')
+  const context = canvas.getContext('2d')
+  const statusEl = document.getElementById('status')
+  const counterEl = document.getElementById('counter')
+  const incrementBtn = document.getElementById('incrementBtn')
+  const colorPicker = document.getElementById('colorPicker')
+  const lineWidthInput = document.getElementById('lineWidth')
+  const lineWidthValue = document.getElementById('lineWidthValue')
+  const clearBtn = document.getElementById('clearBtn')
+  const eraserBtn = document.getElementById('eraserBtn')
+  const toolSelect = document.getElementById('toolSelect')
+  const imageBtn = document.getElementById('imageBtn')
+  const imageInput = document.getElementById('imageInput')
+  const saveBtn = document.getElementById('saveBtn')
+  const textInputWrapper = document.getElementById('textInput')
+  const textBox = document.getElementById('textBox')
+  const textBtn = document.getElementById('textBtn')
 
-// Wait for DOM to be ready
-function init() {
-  console.log('Initializing Yjs client...')
-  console.log('Connecting to WebSocket...')
+  // local drawing state
+  let tool = 'pen'
+  let currentColor = colorPicker.value || '#000000'
+  let currentLineWidth = Number(lineWidthInput.value || 2)
+  let isDrawing = false
+  let dragStartX = 0
+  let dragStartY = 0
+  let currentShapeIndex = -1
+  let pendingPenPoints = []
+  let rafId = null
 
-  // Create Yjs document
+  colorPicker.addEventListener('input', (e) => currentColor = e.target.value)
+  lineWidthInput.addEventListener('input', (e) => {
+    currentLineWidth = Number(e.target.value)
+    lineWidthValue.textContent = `${currentLineWidth}px`
+  })
+
+  // ---------- Yjs setup ----------
   const ydoc = new Y.Doc()
-  console.log('Yjs Doc created with clientID:', ydoc.clientID)
-  
-  // Create shared types - use Y.Map for structured data
-  const rootMap = ydoc.getMap('root')
-  console.log('Root map keys on load:', Array.from(rootMap.keys()))
-  
-  var isReady = false
+  // connect to local server. change ws://localhost:1234 if your server runs elsewhere
+  const provider = new WebsocketProvider('ws://localhost:1234', 'whiteboard-room', ydoc)
 
-  function updateStatus(status, color) {
-    var statusEl = document.getElementById('status')
-    if (statusEl) {
-      statusEl.textContent = status
-      statusEl.style.color = color || 'black'
-    }
-  }
+  // shared types
+  const shapes = ydoc.getArray('shapes') // array of shape-objects
+  const meta = ydoc.getMap('meta') // used to store 'count' and other small shared values
 
-  // Connect to WebSocket provider
-  const wsProvider = new WebsocketProvider('ws://localhost:8081', 'whiteboard-room', ydoc)
-
-  wsProvider.on('status', (event) => {
-    console.log('[ws] status event:', event.status)
-    if (event.status === 'connected') {
-      updateStatus('Connected', 'green')
-      isReady = true
-    } else if (event.status === 'connecting') {
-      updateStatus('Connecting...', 'orange')
-    } else if (event.status === 'disconnected') {
-      updateStatus('Disconnected', 'red')
-      isReady = false
-    }
+  // connection status
+  provider.on('status', (ev) => {
+    statusEl.textContent = ev.status
   })
 
-  wsProvider.on('sync', (isSynced) => {
-    console.log('[ws] sync event:', isSynced)
-    if (isSynced) {
-      updateStatus('Connected', 'green')
-      isReady = true
-    }
-  })
-
-  wsProvider.on('connection-error', (error) => {
-    console.error('[ws] connection error:', error)
-    updateStatus('Connection Error', 'red')
-    isReady = false
-  })
-
-  wsProvider.on('connection-close', () => {
-    console.log('[ws] connection closed')
-    updateStatus('Disconnected', 'red')
-    isReady = false
-  })
-
-  // Initialize counter
-  console.log('Initializing counter...')
-  
-  // Counter via CRDT log of deltas (Y.Array of ints)
-  let counterOps = rootMap.get('counterOps')
-  if (!counterOps) {
-    counterOps = new Y.Array()
-    rootMap.set('counterOps', counterOps)
-    console.log('[counter] created counterOps array')
-  } else {
-    console.log('[counter] using existing counterOps with length:', counterOps.length)
-  }
-  // Rebind to the canonical integrated instance from the map
-  counterOps = rootMap.get('counterOps')
-  console.log('[counter] counterOps is Y.Array:', counterOps instanceof Y.Array, 'constructor:', counterOps?.constructor?.name, 'length:', counterOps?.length)
-
-  function currentCounterValue() {
-    const arr = counterOps ? counterOps.toArray() : []
-    const sum = arr.reduce((acc, v) => acc + (Number(v) || 0), 0)
-    return sum
+  // ensure counter UI follows shared state
+  function updateCounterUI() {
+    const v = meta.get('count') || 0
+    counterEl.textContent = String(v)
   }
 
-  // Listen for counter changes on counterOps
-  counterOps.observe((event) => {
-    console.log('[counter] counterOps changed; length now', counterOps.length, 'event:', event)
-    console.log('[counter] current value after change:', currentCounterValue())
-    updateCounter()
+  // observe meta map changes
+  meta.observe(() => {
+    updateCounterUI()
   })
 
-  // Fallback: listen to any doc update to re-render counter (covers missed observers)
-  ydoc.on('update', () => {
-    console.log('[counter] doc update received; recomputing counter')
-    updateCounter()
+  // observe shapes (repaint when shapes change)
+  shapes.observe(() => {
+    redrawCanvas()
   })
 
-  function updateCounter() {
-    const counterValue = currentCounterValue()
-    var counterElement = document.getElementById('counter')
-    if (counterElement) {
-      const before = counterElement.textContent
-      counterElement.textContent = String(counterValue)
-      console.log('Counter UI updated to', counterValue, '(was:', before, ')')
-    } else {
-      console.warn('Counter element not found')
-    }
-  }
-
-  // Initial counter update
-  updateCounter()
-
-  // Initialize whiteboard
-  console.log('Initializing whiteboard...')
-  
-  // Get or create shapes array
-  let shapesArray = rootMap.get('shapes')
-  if (!shapesArray) {
-    shapesArray = new Y.Array()
-    rootMap.set('shapes', shapesArray)
-    console.log('Created shapes array')
-  } else {
-    console.log('Shapes array already present with length:', shapesArray.length)
-  }
-
-  // Initialize whiteboard UI
-  function tryInitWhiteboard() {
-    if (typeof window.initYjsWhiteboard === 'function') {
-      console.log('Calling window.initYjsWhiteboard...')
-      window.initYjsWhiteboard(shapesArray)
-    } else {
-      console.log('window.initYjsWhiteboard not ready yet, retrying in 100ms...')
-      setTimeout(tryInitWhiteboard, 100)
-    }
-  }
-
-  // On sync, initialize whiteboard (counterOps works offline/online)
-  wsProvider.on('sync', (isSynced) => {
-    if (isSynced) {
-      console.log('[ws] sync -> initialize whiteboard and counter UI')
-      updateCounter()
-      tryInitWhiteboard()
-    }
+  // when provider initially syncs we want to render existing content and set ready state
+  provider.once('synced', () => {
+    // set default counter if missing
+    ydoc.transact(() => {
+      if (meta.get('count') === undefined) meta.set('count', 0)
+    })
+    updateCounterUI()
+    redrawCanvas()
+    console.log('yjs provider synced')
   })
 
-  // If already synced (e.g., fast reconnect)
-  if (wsProvider.synced) {
-    updateCounter()
-    tryInitWhiteboard()
-  }
+  // increment button -> shared increment using a ydoc transaction
+  incrementBtn.addEventListener('click', () => {
+    ydoc.transact(() => {
+      const current = meta.get('count') || 0
+      meta.set('count', current + 1)
+    })
+  })
 
-  // Counter increment button
-  var incrementBtn = document.getElementById('incrementBtn')
-  if (incrementBtn) {
-    incrementBtn.addEventListener('click', () => {
-      console.log('[ui] increment button clicked; isReady:', isReady, 'ws synced:', wsProvider.synced)
-      if (!isReady) {
-        console.error('Document not ready yet. Please wait for connection.')
-        alert('Document not ready yet. Please wait for connection.')
-        return
-      }
-      
-      const canonical = rootMap.get('counterOps')
-      console.log('[counter] appending increment op; counterOps length before:', counterOps.length, 'same instance as rootMap.get?', counterOps === canonical)
-      try {
-        if (!canonical || typeof canonical.push !== 'function') {
-          console.error('[counter] counterOps missing or invalid:', canonical)
-          return
-        }
-        canonical.push([1]) // log an increment event
-        counterOps = canonical // keep local reference in sync
-        const newLen = canonical.length
-        console.log('[counter] increment op appended; total ops:', newLen, 'current value:', currentCounterValue(), 'rootMap.get len:', rootMap.get('counterOps')?.length)
-      } catch (error) {
-        console.error('Error incrementing counter:', error)
-        alert('Error incrementing counter: ' + error.message)
+  // clear all shapes (collaborative)
+  clearBtn.addEventListener('click', () => {
+    ydoc.transact(() => {
+      // delete all elements from shapes
+      if (shapes.length > 0) {
+        shapes.delete(0, shapes.length)
       }
     })
-  } else {
-    console.warn('[ui] increment button not found in DOM')
+  })
+
+  eraserBtn.addEventListener('click', () => {
+    tool = 'eraser'
+    canvas.classList.add('eraser')
+    alert('Note: Eraser only clears locally. For collaborative erasing you can delete a shape from the list (not implemented here)')
+  })
+
+  toolSelect.addEventListener('change', (e) => {
+    tool = e.target.value
+    canvas.classList.remove('eraser')
+    if (tool === 'text') {
+      textInputWrapper.classList.remove('hidden')
+      textBox.focus()
+    } else {
+      textInputWrapper.classList.add('hidden')
+    }
+  })
+
+  textBtn.addEventListener('click', () => {
+    const t = textBox.value.trim()
+    if (!t) return
+    ydoc.transact(() => {
+      shapes.push([{ type: 'text', text: t, x: dragStartX || 100, y: dragStartY || 100, color: currentColor }])
+    })
+    textBox.value = ''
+    textInputWrapper.classList.add('hidden')
+    tool = 'pen'
+  })
+
+  // image upload (local only)
+  imageBtn.addEventListener('click', () => imageInput.click())
+  imageInput.addEventListener('change', (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = () => {
+      const img = new Image()
+      img.onload = () => {
+        context.drawImage(img, 0, 0, Math.min(img.width, canvas.width), Math.min(img.height, canvas.height))
+      }
+      img.src = reader.result
+    }
+    reader.readAsDataURL(file)
+  })
+
+  saveBtn.addEventListener('click', () => {
+    const image = canvas.toDataURL('image/png')
+    const link = document.createElement('a')
+    link.href = image
+    link.download = 'whiteboard-' + Date.now() + '.png'
+    link.click()
+  })
+
+  // ---------- drawing & rendering ----------
+  function redrawCanvas() {
+    if (rafId) cancelAnimationFrame(rafId)
+    rafId = requestAnimationFrame(() => {
+      context.clearRect(0, 0, canvas.width, canvas.height)
+      if (!shapes || shapes.length === 0) return
+      const arr = shapes.toArray()
+      arr.forEach((shape) => {
+        if (!shape) return
+        context.strokeStyle = shape.color || '#000'
+        context.fillStyle = shape.color || '#000'
+        context.lineWidth = shape.width || 2
+
+        if (shape.type === 'line') {
+          context.beginPath()
+          context.moveTo(shape.startX, shape.startY)
+          context.lineTo(shape.endX, shape.endY)
+          context.stroke()
+        } else if (shape.type === 'rectangle') {
+          context.beginPath()
+          const w = shape.endX - shape.startX
+          const h = shape.endY - shape.startY
+          context.rect(shape.startX, shape.startY, w, h)
+          context.stroke()
+        } else if (shape.type === 'circle') {
+          context.beginPath()
+          context.arc(shape.startX, shape.startY, shape.radius || 0, 0, Math.PI * 2)
+          context.stroke()
+        } else if (shape.type === 'text') {
+          context.font = '16px Arial'
+          context.fillText(shape.text, shape.x, shape.y)
+        } else if (shape.type === 'pen') {
+          if (Array.isArray(shape.points) && shape.points.length > 1) {
+            context.beginPath()
+            context.lineJoin = 'round'
+            context.lineCap = 'round'
+            context.moveTo(shape.points[0].x, shape.points[0].y)
+            for (let i = 1; i < shape.points.length; i++) {
+              context.lineTo(shape.points[i].x, shape.points[i].y)
+            }
+            context.stroke()
+          }
+        }
+      })
+    })
   }
 
-  // Log current counter shortly after init for debugging
-  setTimeout(() => {
-    console.log('[debug] post-init counter value:', currentCounterValue(), 'ops length:', counterOps.length)
-  }, 500)
-}
+  // input events
+  canvas.addEventListener('mousedown', (e) => {
+    isDrawing = true
+    dragStartX = e.offsetX
+    dragStartY = e.offsetY
 
-// Initialize when DOM is ready
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', init)
-} else {
-  init()
-}
+    ydoc.transact(() => {
+      if (tool === 'pen') {
+        const newStroke = { type: 'pen', points: [{ x: dragStartX, y: dragStartY }], color: currentColor, width: currentLineWidth }
+        shapes.push([newStroke])
+        currentShapeIndex = shapes.length - 1
+      } else if (tool === 'line' || tool === 'rectangle' || tool === 'circle') {
+        const tempShape = { type: tool, startX: dragStartX, startY: dragStartY, endX: dragStartX, endY: dragStartY, radius: 0, color: currentColor, width: currentLineWidth }
+        shapes.push([tempShape])
+        currentShapeIndex = shapes.length - 1
+      }
+    })
+  })
+
+  canvas.addEventListener('mousemove', (e) => {
+    if (!isDrawing || currentShapeIndex === -1) return
+    const offsetX = e.offsetX
+    const offsetY = e.offsetY
+
+    if (tool === 'pen') {
+      pendingPenPoints.push({ x: offsetX, y: offsetY })
+      if (!rafId) {
+        rafId = requestAnimationFrame(() => {
+          if (pendingPenPoints.length > 0) {
+            ydoc.transact(() => {
+              const shape = shapes.get(currentShapeIndex)
+              if (shape) {
+                // combine safely
+                const existing = Array.isArray(shape.points) ? shape.points : []
+                const updatedPoints = [...existing, ...pendingPenPoints]
+                // replace item atomically
+                shapes.delete(currentShapeIndex)
+                shapes.insert(currentShapeIndex, [{ ...shape, points: updatedPoints }])
+              }
+            })
+            pendingPenPoints = []
+          }
+          rafId = null
+        })
+      }
+    } else if (tool === 'line' || tool === 'rectangle' || tool === 'circle') {
+      const shape = shapes.get(currentShapeIndex)
+      if (!shape) return
+      const radius = Math.sqrt(Math.pow(offsetX - dragStartX, 2) + Math.pow(offsetY - dragStartY, 2))
+      const updated = { ...shape, endX: offsetX, endY: offsetY, radius }
+      ydoc.transact(() => {
+        shapes.delete(currentShapeIndex)
+        shapes.insert(currentShapeIndex, [updated])
+      })
+    }
+  })
+
+  canvas.addEventListener('mouseup', () => {
+    if (tool === 'pen' && pendingPenPoints.length > 0 && currentShapeIndex !== -1) {
+      ydoc.transact(() => {
+        const shape = shapes.get(currentShapeIndex)
+        if (shape) {
+          const updatedPoints = [...(shape.points || []), ...pendingPenPoints]
+          shapes.delete(currentShapeIndex)
+          shapes.insert(currentShapeIndex, [{ ...shape, points: updatedPoints }])
+        }
+      })
+      pendingPenPoints = []
+    }
+    isDrawing = false
+    currentShapeIndex = -1
+  })
+
+  // click outside canvas or leave should stop drawing
+  canvas.addEventListener('mouseleave', () => {
+    if (isDrawing) {
+      canvas.dispatchEvent(new Event('mouseup'))
+    }
+  })
+
+  // initial render (in case there's content before sync)
+  redrawCanvas()
+})

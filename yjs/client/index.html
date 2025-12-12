@@ -45,7 +45,6 @@
 </nav>
 
 <div class="pt-24 pb-8 px-4">
-    <!-- Status Bar -->
     <div class="max-w-6xl mx-auto mb-4">
         <div class="bg-white rounded-lg shadow p-4 flex justify-between items-center">
             <div>
@@ -60,13 +59,11 @@
         </div>
     </div>
 
-    <!-- Whiteboard Container -->
     <div class="max-w-6xl mx-auto bg-white shadow-lg rounded-lg p-6">
         <h1 class="text-3xl font-semibold mb-6 text-center text-gray-800">
             Virtual Whiteboard
         </h1>
         
-        <!-- Canvas Container -->
         <div class="border-2 border-gray-300 rounded-lg mb-6 p-4 relative bg-white">
             <div class="flex justify-center items-center">
                 <canvas id="whiteboard" width="900" height="600" class="border border-gray-200 rounded"></canvas>
@@ -81,9 +78,7 @@
             </div>
         </div>
         
-        <!-- Tools Panel -->
         <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-            <!-- Drawing Tools -->
             <div class="bg-gray-50 p-4 rounded-lg">
                 <label for="toolSelect" class="block text-sm font-medium text-gray-700 mb-2">
                     Drawing Tool:
@@ -97,7 +92,6 @@
                 </select>
             </div>
 
-            <!-- Color Picker -->
             <div class="bg-gray-50 p-4 rounded-lg">
                 <label for="colorPicker" class="block text-sm font-medium text-gray-700 mb-2">
                     Color:
@@ -109,7 +103,6 @@
                 </div>
             </div>
 
-            <!-- Actions -->
             <div class="bg-gray-50 p-4 rounded-lg flex gap-2">
                 <button id="saveBtn" class="flex-1 px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition">
                     💾 Save
@@ -121,7 +114,6 @@
             </div>
         </div>
 
-        <!-- Text Input (Hidden by default) -->
         <div id="textInput" class="mb-4 hidden bg-blue-50 p-4 rounded-lg">
             <div class="flex gap-2">
                 <input type="text" id="textBox" placeholder="Enter text to add to canvas..." class="flex-1 border border-gray-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
@@ -133,303 +125,7 @@
     </div>
 </div>
 
-<script src="https://unpkg.com/yjs@13.6.27/dist/yjs.js"></script>
 <script type="module" src="client.js"></script>
-<script>
-    // Whiteboard variables
-    const canvas = document.getElementById('whiteboard');
-    const context = canvas.getContext('2d');
-    let isDrawing = false;
-    let lastX = 0;
-    let lastY = 0;
-    let tool = 'pen';
-    let currentColor = '#000000';
-    let currentLineWidth = 2;
-    let drag = false;
-    let dragStartX, dragStartY;
-    let isWhiteboardReady = false;
-
-    // Color and line width controls
-    document.getElementById('colorPicker').addEventListener('input', (e) => {
-        currentColor = e.target.value;
-    });
-
-    document.getElementById('lineWidth').addEventListener('input', (e) => {
-        currentLineWidth = e.target.value;
-        document.getElementById('lineWidthValue').textContent = currentLineWidth + 'px';
-    });
-
-    // Redraw all shapes from Yjs
-    function redrawCanvas(shapesArray) {
-        context.clearRect(0, 0, canvas.width, canvas.height);
-        
-        if (!shapesArray || shapesArray.length === 0) return;
-        console.log('[draw] Redrawing canvas with', shapesArray.length, 'shape(s)');
-        
-        shapesArray.forEach(shape => {
-            if (!shape) return;
-            
-            context.strokeStyle = shape.color || '#000';
-            context.fillStyle = shape.color || '#000';
-            context.lineWidth = shape.width || 2;
-            
-            if (shape.type === 'line') {
-                context.beginPath();
-                context.moveTo(shape.startX, shape.startY);
-                context.lineTo(shape.endX, shape.endY);
-                context.stroke();
-            } else if (shape.type === 'rectangle') {
-                context.beginPath();
-                context.rect(shape.startX, shape.startY,
-                    shape.endX - shape.startX,
-                    shape.endY - shape.startY);
-                context.stroke();
-            } else if (shape.type === 'circle') {
-                context.beginPath();
-                context.arc(shape.startX, shape.startY,
-                    shape.radius, 0, Math.PI * 2);
-                context.stroke();
-            } else if (shape.type === 'text') {
-                context.font = '16px Arial';
-                context.fillText(shape.text, shape.x, shape.y);
-            } else if (shape.type === 'pen') {
-                // Draw pen strokes
-                if (shape.points && shape.points.length > 1) {
-                    context.beginPath();
-                    context.moveTo(shape.points[0].x, shape.points[0].y);
-                    for (let i = 1; i < shape.points.length; i++) {
-                        context.lineTo(shape.points[i].x, shape.points[i].y);
-                    }
-                    context.stroke();
-                }
-            }
-        });
-    }
-
-    // Mouse events
-    let currentPenStroke = null;
-
-    canvas.addEventListener('mousedown', (e) => {
-        if (!isWhiteboardReady) {
-            alert('Whiteboard not ready yet. Please wait for connection.');
-            return;
-        }
-        console.log('[input] mousedown', { tool, x: e.offsetX, y: e.offsetY });
-        
-        isDrawing = true;
-        lastX = e.offsetX;
-        lastY = e.offsetY;
-        
-        if (tool === 'pen') {
-            context.beginPath();
-            context.moveTo(lastX, lastY);
-            // Start a new pen stroke
-            currentPenStroke = {
-                type: 'pen',
-                points: [{x: lastX, y: lastY}],
-                color: currentColor,
-                width: currentLineWidth
-            };
-        }
-        
-        if (tool === 'line' || tool === 'rectangle' || tool === 'circle') {
-            drag = true;
-            dragStartX = e.offsetX;
-            dragStartY = e.offsetY;
-        }
-    });
-
-    canvas.addEventListener('mousemove', (e) => {
-        if (!isDrawing) return;
-        
-        const { offsetX, offsetY } = e;
-        if (tool === 'pen' && currentPenStroke && currentPenStroke.points.length % 10 === 0) {
-            console.log('[input] pen move points:', currentPenStroke.points.length);
-        }
-        
-        if (tool === 'pen') {
-            context.lineWidth = currentLineWidth;
-            context.strokeStyle = currentColor;
-            context.lineTo(offsetX, offsetY);
-            context.stroke();
-            
-            // Add point to current stroke
-            if (currentPenStroke) {
-                currentPenStroke.points.push({x: offsetX, y: offsetY});
-            }
-        } else if (tool === 'eraser') {
-            context.clearRect(offsetX - 10, offsetY - 10, 20, 20);
-        } else if ((tool === 'line' || tool === 'rectangle' || tool === 'circle') && drag) {
-            if (window.shapesArray) {
-                redrawCanvas(Array.from(window.shapesArray));
-            }
-            
-            context.strokeStyle = currentColor;
-            context.lineWidth = currentLineWidth;
-            
-            if (tool === 'line') {
-                context.beginPath();
-                context.moveTo(lastX, lastY);
-                context.lineTo(offsetX, offsetY);
-                context.stroke();
-            } else if (tool === 'rectangle') {
-                context.beginPath();
-                context.rect(lastX, lastY, offsetX - lastX, offsetY - lastY);
-                context.stroke();
-            } else if (tool === 'circle') {
-                const radius = Math.sqrt(Math.pow(offsetX - lastX, 2) +
-                    Math.pow(offsetY - lastY, 2));
-                context.beginPath();
-                context.arc(lastX, lastY, radius, 0, Math.PI * 2);
-                context.stroke();
-            }
-        }
-    });
-
-    canvas.addEventListener('mouseup', (e) => {
-        if (!isDrawing) return;
-        
-        if (tool === 'pen' && currentPenStroke) {
-            // Submit the complete pen stroke to Yjs
-            if (window.shapesArray) {
-                console.log('[sync] submitting pen stroke with', currentPenStroke.points.length, 'points');
-                window.shapesArray.push([currentPenStroke]);
-            }
-            currentPenStroke = null;
-        } else if (tool === 'line' || tool === 'rectangle' || tool === 'circle') {
-            const newShape = {
-                type: tool,
-                startX: dragStartX,
-                startY: dragStartY,
-                endX: e.offsetX,
-                endY: e.offsetY,
-                radius: Math.sqrt(Math.pow(e.offsetX - dragStartX, 2) +
-                        Math.pow(e.offsetY - dragStartY, 2)),
-                color: currentColor,
-                width: currentLineWidth
-            };
-            
-            // Submit to Yjs
-            if (window.shapesArray) {
-                console.log('[sync] submitting shape', newShape);
-                window.shapesArray.push([newShape]);
-            }
-        }
-        
-        isDrawing = false;
-        drag = false;
-    });
-
-    // Tool buttons
-    document.getElementById('clearBtn').addEventListener('click', () => {
-        if (!isWhiteboardReady) {
-            alert('Whiteboard not ready yet. Please wait for connection.');
-            return;
-        }
-        console.log('[sync] clearing all shapes');
-        
-        context.clearRect(0, 0, canvas.width, canvas.height);
-        
-        // Clear in Yjs
-        if (window.shapesArray) {
-            // Delete all items
-            const length = window.shapesArray.length;
-            for (let i = length - 1; i >= 0; i--) {
-                window.shapesArray.delete(i);
-            }
-        }
-    });
-
-    document.getElementById('eraserBtn').addEventListener('click', () => {
-        tool = 'eraser';
-        canvas.classList.add('eraser');
-    });
-
-    document.getElementById('toolSelect').addEventListener('change', (e) => {
-        tool = e.target.value;
-        canvas.classList.remove('eraser');
-        
-        if (tool === 'text') {
-            document.getElementById('textInput').classList.remove('hidden');
-            document.getElementById('textBox').focus();
-        } else {
-            document.getElementById('textInput').classList.add('hidden');
-        }
-    });
-
-    // Text tool
-    document.getElementById('textBtn').addEventListener('click', () => {
-        const text = document.getElementById('textBox').value;
-        if (text && isWhiteboardReady) {
-            const textShape = {
-                type: 'text',
-                text: text,
-                x: lastX || 100,
-                y: lastY || 100,
-                color: currentColor
-            };
-            
-            context.font = '16px Arial';
-            context.fillStyle = currentColor;
-            context.fillText(text, textShape.x, textShape.y);
-            
-            // Submit to Yjs
-            if (window.shapesArray) {
-                console.log('[sync] submitting text shape', textShape);
-                window.shapesArray.push([textShape]);
-            }
-            
-            document.getElementById('textBox').value = '';
-            document.getElementById('textInput').classList.add('hidden');
-            tool = 'pen';
-        }
-    });
-
-    // Image upload
-    document.getElementById('imageBtn').addEventListener('click', () => {
-        document.getElementById('imageInput').click();
-    });
-
-    document.getElementById('imageInput').addEventListener('change', (e) => {
-        const file = e.target.files[0];
-        const reader = new FileReader();
-        reader.onload = () => {
-            const img = new Image();
-            img.onload = () => {
-                context.drawImage(img, 0, 0, Math.min(img.width, canvas.width), Math.min(img.height, canvas.height));
-            };
-            img.src = reader.result;
-        };
-        reader.readAsDataURL(file);
-    });
-
-    // Save canvas
-    document.getElementById('saveBtn').addEventListener('click', () => {
-        const image = canvas.toDataURL('image/png');
-        const link = document.createElement('a');
-        link.href = image;
-        link.download = 'whiteboard-' + Date.now() + '.png';
-        link.click();
-    });
-
-    // Initialize whiteboard when Yjs is ready
-    window.initYjsWhiteboard = function(shapesArray) {
-        console.log('Initializing whiteboard with Yjs...');
-        window.shapesArray = shapesArray;
-        
-        // Listen for changes from other users
-        shapesArray.observe((event) => {
-            console.log('[sync] shapes array changed:', event);
-            redrawCanvas(Array.from(shapesArray));
-        });
-        
-        // Initial render
-        redrawCanvas(Array.from(shapesArray));
-        
-        isWhiteboardReady = true;
-        console.log('Whiteboard ready!');
-    };
-</script>
 
 </body>
 </html>
