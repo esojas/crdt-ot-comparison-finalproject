@@ -31,7 +31,9 @@ document.addEventListener('DOMContentLoaded', () => {
   let dragStartY = 0
   let currentShapeIndex = -1
   let pendingPenPoints = []
-  let rafId = null
+  let renderRaf = null
+  let batchRaf = null
+
 
   colorPicker.addEventListener('input', (e) => currentColor = e.target.value)
   lineWidthInput.addEventListener('input', (e) => {
@@ -152,8 +154,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ---------- drawing & rendering ----------
   function redrawCanvas() {
-    if (rafId) cancelAnimationFrame(rafId)
-    rafId = requestAnimationFrame(() => {
+    if (renderRaf) cancelAnimationFrame(renderRaf)
+    renderRaf = requestAnimationFrame(() => {
       context.clearRect(0, 0, canvas.width, canvas.height)
       if (!shapes || shapes.length === 0) return
       const arr = shapes.toArray()
@@ -221,25 +223,24 @@ document.addEventListener('DOMContentLoaded', () => {
     const offsetX = e.offsetX
     const offsetY = e.offsetY
 
-    if (tool === 'pen') {
-      pendingPenPoints.push({ x: offsetX, y: offsetY })
-      if (!rafId) {
-        rafId = requestAnimationFrame(() => {
-          if (pendingPenPoints.length > 0) {
-            ydoc.transact(() => {
-              const shape = shapes.get(currentShapeIndex)
-              if (shape) {
-                // combine safely
-                const existing = Array.isArray(shape.points) ? shape.points : []
-                const updatedPoints = [...existing, ...pendingPenPoints]
-                // replace item atomically
-                shapes.delete(currentShapeIndex)
-                shapes.insert(currentShapeIndex, [{ ...shape, points: updatedPoints }])
-              }
-            })
-            pendingPenPoints = []
-          }
-          rafId = null
+  if (tool === 'pen') {
+    pendingPenPoints.push({ x: offsetX, y: offsetY })
+    if (!batchRaf) {
+      batchRaf = requestAnimationFrame(() => {
+        if (pendingPenPoints.length > 0 && currentShapeIndex !== -1) {
+          ydoc.transact(() => {
+            const shape = shapes.get(currentShapeIndex)
+            if (shape) {
+              const existing = Array.isArray(shape.points) ? shape.points : []
+              const updatedPoints = [...existing, ...pendingPenPoints]
+              // replace exactly one element at currentShapeIndex
+              shapes.delete(currentShapeIndex, 1)
+              shapes.insert(currentShapeIndex, [{ ...shape, points: updatedPoints }])
+            }
+          })
+          pendingPenPoints = []
+        }
+        batchRaf = null
         })
       }
     } else if (tool === 'line' || tool === 'rectangle' || tool === 'circle') {
@@ -260,12 +261,12 @@ document.addEventListener('DOMContentLoaded', () => {
         const shape = shapes.get(currentShapeIndex)
         if (shape) {
           const updatedPoints = [...(shape.points || []), ...pendingPenPoints]
-          shapes.delete(currentShapeIndex)
+          shapes.delete(currentShapeIndex, 1)
           shapes.insert(currentShapeIndex, [{ ...shape, points: updatedPoints }])
         }
       })
       pendingPenPoints = []
-    }
+    }    
     isDrawing = false
     currentShapeIndex = -1
   })
