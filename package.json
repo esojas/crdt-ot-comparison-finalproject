@@ -24,7 +24,10 @@
     "yjs": "^13.6.27"
   },
   "devDependencies": {
+    "autoprefixer": "^10.4.23",
     "browserify": "^17.0.1",
-    "nodemon": "^3.1.11"
+    "nodemon": "^3.1.11",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^3.4.19"
   }
 }
